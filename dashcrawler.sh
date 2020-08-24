@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.4 build date 202007172200)"
+VERSION="$0 (v0.1.5 build date 202008242023)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -117,17 +117,17 @@ DATABASE_FILE="$DATADIR/database/$NETWORK/nodes.db"
 check_dependencies(){
 
 	perl -v >/dev/null 2>&1
-	if [ $? -ne 0 ];then
-		progs="$progs perl"
+	if (( $? != 0 ));then
+		progs+=" perl"
 	else
 		perl -v|grep -q "This is perl " || echo "[$$] Please update your perl to at least version 5." >&2
 	fi
 
-	bc -v >/dev/null 2>&1 || progs="$progs bc"
+	bc -v >/dev/null 2>&1 || progs+=" bc"
 
-	nc -h >/dev/null 2>&1 || progs="$progs netcat"
+	nc -h >/dev/null 2>&1 || progs+=" netcat"
 
-	sqlite3 -version >/dev/null 2>&1 || progs="$progs sqlite3"
+	sqlite3 -version >/dev/null 2>&1 || progs+=" sqlite3"
 
 
 	if [[ -n $progs ]];then
@@ -285,7 +285,7 @@ initialise_database(){
 		#			height				-	If the node is active record its reported best height.
 		#			user_agent			-	If the node is active record its reported User agent.
 		#			masternode_ynu		-	If the node claims to be a masternode.
-		# Example: insert into DASH_NODES(ip,port) values('1.2.1.2',65536);
+		# Example: insert into DASH_NODES(ip,port) values('1.2.1.2',65535);
 		#
 		# The list of nodes can include valid nodes that are not active and never been active, eg full nodes behind a firewall.
 		# These will have a recent last_seen_time because the network is still reporting them as valid nodes.
@@ -374,7 +374,7 @@ probe_node_and_parse_data(){
 	# select 1 from DASH_NODES where ip=$ip and port=$port; // Avoid an insert of a new IP if already found.
 	# For a version command
 
-	#This will change depending on which network is set.
+	# This will change depending on which network is set.
 	eval magic='$'"$NETWORK"_magic
 
 	# The dump files don't have a final newline which causes read to skip it, so append one now.
@@ -405,6 +405,7 @@ probe_node_and_parse_data(){
 				fi
 				height="$((16#${line:$((ua_length * 2 + 6 + 210)):2}${line:$((ua_length * 2 + 4 + 210)):2}${line:$((ua_length * 2 + 2 + 210)):2}${line:$((ua_length * 2 + 0 + 210)):2}))"
 				# Masternodes will have a larger payload than non-masternodes thanks to send 32 bytes of MNAUTH.
+				echo "[$$] 120 + ua_length = $((120 + ua_length)) > $((16#${line:32:2}))" >&2
 				if (( $((120 + ua_length)) > $((16#${line:32:2})) ));then
 					masternode='Y'
 				else
