@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.5 build date 202008242023)"
+VERSION="$0 (v0.1.6 build date 202008261813)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -88,7 +88,7 @@ case $key in
 		# The default case, try to check for an IP or Port and set it, otherwise complain about bad input.
 		if [[ "$1" =~ ^(0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))\.){3}0*(1?[0-9]{1,2}|2([‌​0-4][0-9]|5[0-5]))$ ]];then
 			IP="$1"
-		elif [[ "$1" =~ ^[0-9]+$ ]] && (($1 > 0)) && (($1 < 65536));then
+		elif [[ "$1" =~ ^[0-9]+$ ]] && (($1 >= 0)) && (($1 < 65536));then
 			PORT=$1
 		else
 			echo -e "[$$] $VERSION\n[$$] Unknown parameter $1\n[$$] Please check help page with $0 -help" >&2
