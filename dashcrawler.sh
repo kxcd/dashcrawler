@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.9 build date 202011161634)"
+VERSION="$0 (v0.1.11 build date 202011162027)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -256,9 +256,10 @@ execute_sql(){
 		sqlite3 "$DATABASE_FILE" <<< "$1" 2>>"$DATADIR"/logs/sqlite.log && return
 		retval=$?
 		echo "[$$] Failed query attempt number: $i." >>"$DATADIR"/logs/sqlite.log
-		sleep 1
-		# sleep a two digit random time after every 10 failed shots.
-		(($((i % 10)) == 0))&& sleep ${RANDOM:0:2}
+		delay=1
+		# Add extra delay time after every 10 failed shots.
+		(($((i % 10)) == 0)) && delay=$((delay+RANDOM%100))
+		sleep "$delay"
 	done
 	echo -e "[$$] The failed query vvvvv\n$1\n[$$] ^^^^^ The above query did not succeed after $i attempts, aborting..." >>"$DATADIR"/logs/sqlite.log
 	return $retval
@@ -452,7 +453,7 @@ probe_node_and_parse_data(){
 					sql+="$sql_insert"
 					sql+="update DASH_NODES set last_seen_time=strftime('%s','now') where exists (select 1 from SEEN_NODES t where DASH_NODES.ip=t.ip and DASH_NODES.port=t.port);
 							select 'Updated '||changes()||' existing records (duplicates) in the database...';
-							insert into DASH_NODES (ip,port) select t.ip,t.port from temp.SEEN_NODES t where not exists (select 1 from DASH_NODES d where d.ip=t.ip and d.port=t.port);
+							insert into DASH_NODES (ip,port,last_seen_time) select t.ip,t.port,strftime('%s','now') from temp.SEEN_NODES t where not exists (select 1 from DASH_NODES d where d.ip=t.ip and d.port=t.port);
 							select 'Inserted '||changes()||' new records into the database...';
 							commit;"
 					execute_sql "$sql"
@@ -535,21 +536,23 @@ while : ;do
 		row_count=$(execute_sql "$sql")
 		(( row_count == 0 )) && ((idle_cycle++))
 	difference=$((EPOCHSECONDS - time_now ))
-	(( difference > 2 )) && sleep "$difference"0
+	(( difference > 2 )) && sleep "${difference}0"
 
 	sql="select ip,port from DASH_NODES where active_ynu='U' and check_in_progress_YN='N'"
 	sql+="union all "
-	sql+="select ip,port from DASH_NODES where active_ynu!='U' and checked_time<$time and check_in_progress_YN='N' limit 5;"
+	sql+="select ip,port from DASH_NODES where active_ynu!='U' and checked_time<$time and check_in_progress_YN='N' limit 500;"
 	execute_sql "$sql"|
 	while IFS='|' read -r IP PORT;do
+		time_now=$EPOCHSECONDS;delay=2
 		# We will mark the child as busy here before launching the process, the child will reverse this update just before exiting.
 		execute_sql "update DASH_NODES set check_in_progress_YN='Y' where ip=\"$IP\" and port=$PORT;"
 		echo "[$$] Checking $IP:$PORT..."
 		# Make it re-entrant.
 		"$0" -child -datadir "$DATADIR" -network "$NETWORK" "$IP" "$PORT" &
-		sleep 1
+		difference=$((EPOCHSECONDS - time_now ))
+		(( difference > 2 )) && delay=$((delay + "${difference}0" + RANDOM%difference))
+		sleep "$delay"
 	done
-	sleep 5
 
 
 	if (( idle_cycle > 25 ));then
