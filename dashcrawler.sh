@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.11 build date 202011162027)"
+VERSION="$0 (v0.2.0 build date 202011160056)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -259,6 +259,7 @@ execute_sql(){
 		delay=1
 		# Add extra delay time after every 10 failed shots.
 		(($((i % 10)) == 0)) && delay=$((delay+RANDOM%100))
+		(($((i % 20)) == 0)) && delay=$((delay+RANDOM%300))
 		sleep "$delay"
 	done
 	echo -e "[$$] The failed query vvvvv\n$1\n[$$] ^^^^^ The above query did not succeed after $i attempts, aborting..." >>"$DATADIR"/logs/sqlite.log
@@ -432,6 +433,11 @@ probe_node_and_parse_data(){
 				fi
 				# Short messages are just echoing back the ip of the machine we have just connected to.
 				(( $((16#${line:38:2}${line:36:2}${line:34:2}${line:32:2})) < 32 )) && continue
+				# Non-dash nodes just pollute the database.
+				if [[ ! $user_agent =~ "Dash Core" ]];then
+					echo "[$$] Skipping node with user agent $user_agent." >&2
+					continue
+				fi
 				num_ip="$((16#${line:52:2}${line:50:2}))"
 				echo "[$$] This node $1:$2 sent $num_ip IPs to check." >&2
 				echo "[$$] Inserting discovered IPs into the database..." >&2
@@ -527,33 +533,33 @@ while : ;do
 	# Next, check any nodes that haven't been updated in the user defined timeframe.
 	echo "[$$] Probing and updating all new and out of date nodes..."
 	time=$((EPOCHSECONDS - POLL_TIME))
-	sql="select count(1) from DASH_NODES where active_ynu='U' or (active_ynu!='U' and checked_time<$time);"
 
-	# The hotspot in the code is the database access.  Put a timer on this call and if it is starting to take a long time, then add a delay.
-	# $EPOCHSECONDS is the same as calling $(date +%s)
-	time_now=$EPOCHSECONDS
-		# Count the number of times we go through the loop and do nothing, finish after a set limit.
-		row_count=$(execute_sql "$sql")
-		(( row_count == 0 )) && ((idle_cycle++))
-	difference=$((EPOCHSECONDS - time_now ))
-	(( difference > 2 )) && sleep "${difference}0"
+	sql="select count(1) from DASH_NODES where active_ynu='U' or (active_ynu!='U' and checked_time<$time);"
+	# Count the number of times we go through the loop and do nothing, finish after a set limit.
+	row_count=$(execute_sql "$sql")
+	(( row_count == 0 )) && ((idle_cycle++))
 
 	sql="select ip,port from DASH_NODES where active_ynu='U' and check_in_progress_YN='N'"
 	sql+="union all "
 	sql+="select ip,port from DASH_NODES where active_ynu!='U' and checked_time<$time and check_in_progress_YN='N' limit 500;"
 	execute_sql "$sql"|
 	while IFS='|' read -r IP PORT;do
-		time_now=$EPOCHSECONDS;delay=2
 		# We will mark the child as busy here before launching the process, the child will reverse this update just before exiting.
 		execute_sql "update DASH_NODES set check_in_progress_YN='Y' where ip=\"$IP\" and port=$PORT;"
 		echo "[$$] Checking $IP:$PORT..."
 		# Make it re-entrant.
 		"$0" -child -datadir "$DATADIR" -network "$NETWORK" "$IP" "$PORT" &
-		difference=$((EPOCHSECONDS - time_now ))
-		(( difference > 2 )) && delay=$((delay + "${difference}0" + RANDOM%difference))
-		sleep "$delay"
-	done
 
+		# The hotspot in the code is the database access.
+		# Check the error rate and slowdown if too fast.
+		while : ;do
+			start_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
+			sleep 1
+			end_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
+			(( start_size==end_size))&&break
+		done
+	done
+	sleep 5
 
 	if (( idle_cycle > 25 ));then
 		idle_cycle=0
