@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.8 build date 202011161531)"
+VERSION="$0 (v0.1.9 build date 202011161634)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -414,7 +414,7 @@ probe_node_and_parse_data(){
 				count=$(execute_sql "$sql")
 				if (( count>0 ));then
 					# BUG: If the user-agent ends up having a " in the string it will cause these SQL statements to break.
-					sql="update DASH_NODES set active_ynu='Y', last_active_time=strftime('%s','now'), last_active_time=strftime('%s','now'), checked_time=strftime('%s','now'), protocol_version=$protocol_version, height=$height, user_agent=\"$user_agent\", masternode_ynu=\"$masternode\" where ip=\"$1\" and port=$2;"
+					sql="update DASH_NODES set active_ynu='Y', last_active_time=strftime('%s','now'), last_seen_time=strftime('%s','now'), checked_time=strftime('%s','now'), protocol_version=$protocol_version, height=$height, user_agent=\"$user_agent\", masternode_ynu=\"$masternode\" where ip=\"$1\" and port=$2;"
 					execute_sql "$sql"
 				else
 					sql="insert into DASH_NODES (ip, port, active_ynu, last_active_time, last_seen_time, checked_time, protocol_version, height, user_agent, masternode_ynu)values(\"$1\", $2, 'Y', strftime('%s','now'), strftime('%s','now'), strftime('%s','now'), $protocol_version, $height, \"$user_agent\",\"$masternode\");"
@@ -423,7 +423,7 @@ probe_node_and_parse_data(){
 				;;
 			# Addresses
 			"$magic"616464720000000000000000*)
-				echo "[$$] Got Addresses!"	>&2
+				echo "[$$] Got Addresses!" >&2
 				# Verify the byte count.  It is bytes in little endian in position 17-20 so, 16-19 times 2
 				if [[ $((16#${line:38:2}${line:36:2}${line:34:2}${line:32:2})) != $((${#line} / 2 - 24)) ]];then
 					echo "[$$] Data length mismatch for address message, skipping!" >&2
