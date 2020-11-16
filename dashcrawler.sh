@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.1.6 build date 202008261813)"
+VERSION="$0 (v0.1.8 build date 202011161531)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -20,7 +20,7 @@ DELETE_TIME=$((60 * 60 * 24 * 5))
 
 usage(){
 	text="$VERSION\n"
-	text+="This program will to crawl over the dash network and find all the\n"
+	text+="This program will crawl over the dash network and find all the\n"
 	text+="full nodes and masternodes and record them to a sqlite database.\n\n"
 	text+="Usage: $0 [ options ] [ ip ] [ port ]\n\n"
 	text+="Options:\n"
@@ -141,9 +141,6 @@ check_dependencies(){
 
 make_datadir(){
 
-	# If a custom datadir is passed in, use it.
-	[[ -n $1 ]] && DATADIR="$1"
-
 	if [[ ! -d "$DATADIR" ]];then
 		mkdir -p "$DATADIR"/{database/{mainnet,testnet},payloads,dumps,logs}
 		if (( $? != 0 ));then
@@ -169,24 +166,24 @@ create_payloads(){
 
 	# Create the version payload to spoof the dashd service into thinking we are a real node.
 
-	if [[ ! -z $USER_AGENT ]];then
+	if [[ -n $USER_AGENT ]];then
 		ua_hex=$(hexdump -v -e '/1 "%02X"' <<< "$USER_AGENT"|sed 's/..$//g')
 		ua_len=$(printf '%02x' ${#USER_AGENT})
 		ua_hex=$ua_len$ua_hex
 	else
 		ua_hex="1468747470733A2F2F6D6E6F77617463682E6F7267"
 	fi
-	if [[ ! -z $PROTOCOL ]];then
-		version_services=$(printf '%08x' $PROTOCOL)
+	if [[ -n $PROTOCOL ]];then
+		version_services=$(printf '%08x' "$PROTOCOL")
 		version_services=${version_services:6:2}${version_services:4:2}${version_services:2:2}${version_services:0:2}"0500000000000000"
 	else
 		version_services="491201000500000000000000"
 	fi
-	timestamp=$(printf '%08x' $EPOCHSECONDS)
+	timestamp=$(printf '%08x' "$EPOCHSECONDS")
 	timestamp=${timestamp:6:2}${timestamp:4:2}${timestamp:2:2}${timestamp:0:2}"00000000"
-	if [[ ! -z $IP ]];then
-		addr_recv_ip_address=$(while IFS='.' read -r a b c d;do printf '%02x%02x%02x%02x' $a $b $c $d;done <<< $IP)
-		addr_recv_ip_address="050000000000000000000000000000000000FFFF"$addr_recv_ip_address$(printf '%04x' $PORT)
+	if [[ -n $IP ]];then
+		addr_recv_ip_address=$(while IFS='.' read -r a b c d;do printf '%02x%02x%02x%02x' "$a" "$b" "$c" "$d";done <<< "$IP")
+		addr_recv_ip_address="050000000000000000000000000000000000FFFF"$addr_recv_ip_address$(printf '%04x' "$PORT")
 	else
 		addr_recv_ip_address="0500000000000000000000000000000000000000000000000000"
 	fi
@@ -195,13 +192,13 @@ create_payloads(){
 	# Height is not something we have, but we can guess where it will be at any point in time.
 	# Block 1306000 happened at 1594980000 on mainnet and another 2 blocks comes every 315 seconds.
 	# So, ((time_now - 1594980000) / 315 * 2) + 1306000 = the current block.
-	delta=$(($EPOCHSECONDS - 1594980000))
+	delta=$((EPOCHSECONDS - 1594980000))
 	case $NETWORK in
 		mainnet)
-			height=$(($(($(($delta / 315)) * 2 ))+1306000))
+			height=$(($(($((delta / 315)) * 2 ))+1306000))
 			;;
 		testnet)
-			height=$(($(($(($delta / 315)) * 2 ))+345000))
+			height=$(($(($((delta / 315)) * 2 ))+345000))
 			;;
 		*)
 			height=0
@@ -234,16 +231,16 @@ create_payloads(){
 	net_magic_command=$net_magic"76657273696f6e0000000000"
 
 	# Finally compute the double sha256 hash of the payload.
-	payload_hash=$(hex_to_raw $vers_payload|sha256sum|while read -r a b;do h=$(hex_to_raw $a|sha256sum);echo "${h:0:8}";done)
+	payload_hash=$(hex_to_raw "$vers_payload"|sha256sum|while read -r a b;do h=$(hex_to_raw "$a"|sha256sum);echo "${h:0:8}";done)
 
 	message_header=$net_magic_command$payload_size$payload_hash
 
-	hex_to_raw $message_header >"$DATADIR"/payloads/payload_01.bin
+	hex_to_raw "$message_header" >"$DATADIR"/payloads/payload_01.bin
 	if (( $? != 0 ));then
 		echo "[$$] Unable to create payload into $DATADIR/payloads/payload_01.bin exiting..." >&2
 		exit 3
 	fi
-	hex_to_raw $vers_payload >"$DATADIR"/payloads/payload_02.bin
+	hex_to_raw "$vers_payload" >"$DATADIR"/payloads/payload_02.bin
 
 	# Just replay the next two payloads, nothing interesting or dynamic in them.
 	hex_to_raw $net_magic"76657261636b000000000000000000005df6e0e2" >"$DATADIR"/payloads/payload_03.bin
@@ -261,7 +258,7 @@ execute_sql(){
 		echo "[$$] Failed query attempt number: $i." >>"$DATADIR"/logs/sqlite.log
 		sleep 1
 		# sleep a two digit random time after every 10 failed shots.
-		(($(($i % 10)) == 0))&& sleep ${RANDOM:0:2}
+		(($((i % 10)) == 0))&& sleep ${RANDOM:0:2}
 	done
 	echo -e "[$$] The failed query vvvvv\n$1\n[$$] ^^^^^ The above query did not succeed after $i attempts, aborting..." >>"$DATADIR"/logs/sqlite.log
 	return $retval
@@ -305,7 +302,7 @@ initialise_database(){
 check_and_upgrade_database(){
 
 	db_version=$(execute_sql "select version from db_version;")
-	if (( $db_version != $DATABASE_VERSION ));then
+	if (( db_version != DATABASE_VERSION ));then
 		echo "[$$] The database version is $db_version was expecting $DATABASE_VERSION" >&2
 		exit 5;
 	fi
@@ -313,7 +310,7 @@ check_and_upgrade_database(){
 	execute_sql "update DASH_NODES set check_in_progress_YN='N';"
 	count=$(execute_sql "select count(1) from DASH_NODES;")
 	echo "[$$] Database is up to date and contains a record of $count node(s)." >&2
-	if [[ -z $IP ]] && [[ $count == 0 ]];then
+	if [[ -z $IP ]] && (( count == 0 ));then
 		echo "[$$] You must provide an IP and Port to start the scanning." >&2
 		exit 7
 	fi
@@ -330,7 +327,7 @@ probe_node_and_parse_data(){
 
 	if (( $# != 2 ));then echo "[$$] probe_node_and_parse_data requires exactly two argument." >&2;exit 11 ;fi
 	dump_file="$DATADIR/dumps/$(date +"%Y%m%d%H%M%S")_$1_$2.bin"
-	cat "$DATADIR"/payloads/payload_0[1234].bin | nc -v -w 120 $1 $2 > "$dump_file" &
+	cat "$DATADIR"/payloads/payload_0[1234].bin | nc -v -w 120 "$1" "$2" > "$dump_file" &
 	nc_pid=$!
 	# If after 5 seconds the file size is still zero the host is dead.
 	sleep 5
@@ -339,8 +336,9 @@ probe_node_and_parse_data(){
 		# Let's update the database there are two options.
 		# 1) The node is new, insert it as such.
 		# 2) It is an existing node that is no longer reachable, so update it.
-		sql="select 1 from DASH_NODES where ip=\"$1\" and port=$2;"
-		if [[ $(execute_sql "$sql") ]];then
+		sql="select count(1) from DASH_NODES where ip=\"$1\" and port=$2;"
+		count=$(execute_sql "$sql")
+		if (( count>0 ));then
 			sql="update DASH_NODES set active_ynu='N', checked_time=strftime('%s','now') where ip=\"$1\" and port=$2;"
 			execute_sql "$sql"
 		else
@@ -385,7 +383,6 @@ probe_node_and_parse_data(){
 			# Version.
 			"$magic"76657273696F6E0000000000*)
 				echo "[$$] Got Version!" >&2
-				NODE_REPLIED=yes
 				# Verify the byte count.
 				# The message header has length at by 17, arrays are indexed from zero, so 16, but in HEX, 2 chars = 1 byte
 				# so double the offset and then read two bytes, wrap that with a base conversion gives us the size of the payload.
@@ -400,7 +397,7 @@ probe_node_and_parse_data(){
 				ua_length="$((16#${line:208:2}))"
 				user_agent=$(hex_to_raw "${line:210:$((ua_length * 2))}")
 				# Not a serious error, but possible reasons for it to happen is if the string has a null byte or maybe ' or " then it could get truncated.
-				if (( $ua_length != ${#user_agent} ));then
+				if (( ua_length != ${#user_agent} ));then
 					echo "[$$] The User Agent string \'$user_agent\' is ${#user_agent} characters long, but the reported length is $ua_length." >&2
 				fi
 				height="$((16#${line:$((ua_length * 2 + 6 + 210)):2}${line:$((ua_length * 2 + 4 + 210)):2}${line:$((ua_length * 2 + 2 + 210)):2}${line:$((ua_length * 2 + 0 + 210)):2}))"
@@ -413,8 +410,9 @@ probe_node_and_parse_data(){
 				fi
 
 				# Store it in the database
-				sql="select 1 from DASH_NODES where ip=\"$1\" and port=$2;"
-				if [[ $(execute_sql "$sql") ]];then
+				sql="select count(1) from DASH_NODES where ip=\"$1\" and port=$2;"
+				count=$(execute_sql "$sql")
+				if (( count>0 ));then
 					# BUG: If the user-agent ends up having a " in the string it will cause these SQL statements to break.
 					sql="update DASH_NODES set active_ynu='Y', last_active_time=strftime('%s','now'), last_active_time=strftime('%s','now'), checked_time=strftime('%s','now'), protocol_version=$protocol_version, height=$height, user_agent=\"$user_agent\", masternode_ynu=\"$masternode\" where ip=\"$1\" and port=$2;"
 					execute_sql "$sql"
@@ -426,7 +424,6 @@ probe_node_and_parse_data(){
 			# Addresses
 			"$magic"616464720000000000000000*)
 				echo "[$$] Got Addresses!"	>&2
-				NODE_REPLIED=yes
 				# Verify the byte count.  It is bytes in little endian in position 17-20 so, 16-19 times 2
 				if [[ $((16#${line:38:2}${line:36:2}${line:34:2}${line:32:2})) != $((${#line} / 2 - 24)) ]];then
 					echo "[$$] Data length mismatch for address message, skipping!" >&2
@@ -436,9 +433,8 @@ probe_node_and_parse_data(){
 				(( $((16#${line:38:2}${line:36:2}${line:34:2}${line:32:2})) < 32 )) && continue
 				num_ip="$((16#${line:52:2}${line:50:2}))"
 				echo "[$$] This node $1:$2 sent $num_ip IPs to check." >&2
-				dups=0; inserts=0
 				echo "[$$] Inserting discovered IPs into the database..." >&2
-				for((i=0; i<$num_ip; i++));do
+				for((i=0; i<num_ip; i++));do
 					if [[ "${line:$((78 + i * 60)):24}" = "00000000000000000000FFFF" ]];then
 						ip="$((16#${line:$((102 + i * 60)):2})).$((16#${line:$((104 + i * 60)):2})).$((16#${line:$((106 + i * 60)):2})).$((16#${line:$((108 + i * 60)):2}))"
 						port="$((16#${line:$((110 + i * 60)):4}))"
@@ -449,7 +445,7 @@ probe_node_and_parse_data(){
 					fi
 				done
 				# Run the sql and all the DB to do all the work assuming we have at least 1 IP to process.
-				if (( $num_ip > 0 ));then
+				if (( num_ip > 0 ));then
 					echo "[$$] Making changes to the database..." >&2
 					sql="begin transaction;
 						create temporary table SEEN_NODES(ip text NOT NULL,port integer NOT NULL, primary key(ip,port));"
@@ -466,23 +462,21 @@ probe_node_and_parse_data(){
 			"$magic"*)
 				# For debugging only print any other message types sent from this node that we are ignoring.
 				# Use tr to remove the null byte otherwise bash complains.
-				msg=$(hex_to_raw  ${line:8:24}|tr -d '\000')
+				msg=$(hex_to_raw  "${line:8:24}"|tr -d '\000')
 				echo "[$$] Ignoring unhandled message: $msg." >&2
 				;;
 			*)
+				# This handles the case where we get data back from the node, but it wasn't actually a dash node at all.
 				echo "[$$] Got unrecognised data from this node $1:$2 ==> $line" >&2
+				sql="update DASH_NODES set active_ynu='N', checked_time=strftime('%s','now') where ip=\"$1\" and port=$2;"
+				execute_sql "$sql"
 				;;
 		esac
-		# This handles the case where we get data back from the node, but it wasn't actually a dash node at all.
-		if [[ -z $NODE_REPLIED ]];then
-			sql="update DASH_NODES set active_ynu='N', checked_time=strftime('%s','now') where ip=\"$1\" and port=$2;"
-			execute_sql "$sql"
-		fi
 	done
 }
 
 # Re-entrant code, skip all the fuss, the caller already did that and get straight to business.
-if [[ ! -z $CHILD ]];then
+if [[ -n $CHILD ]];then
 	probe_node_and_parse_data "$IP" "$PORT"
 	retval=$?
 	execute_sql "update DASH_NODES set check_in_progress_YN='N' where ip=\"$IP\" and port=$PORT;"
@@ -495,9 +489,9 @@ fi
 echo "[$$] Checking program dependencies..."
 check_dependencies
 
-# $datadir can get set by a commandline option.
-echo "[$$] Checking datadir $datadir..."
-make_datadir "$datadir"
+# $DATADIR can get set by a commandline option.
+echo "[$$] Checking datadir $DATADIR..."
+make_datadir
 
 echo "[$$] Generating payloads..."
 create_payloads
@@ -513,11 +507,11 @@ check_and_upgrade_database
 
 # Special case.
 # If a node is given on the command line add it to the database so the database has at least one seed to get going.
-if [[ ! -z $IP ]];then
+if [[ -n $IP ]];then
 	sql="insert into DASH_NODES(ip,port)values(\"$IP\",$PORT);"
 	execute_sql "$sql"
 	if (( $? != 0 ));then
-		echo -e "[$$] Error inserting specified address $IP:$port into the database.\n[$$] Check that it doesn't already exist and try another." >&2
+		echo -e "[$$] Error inserting specified address $IP:$PORT into the database.\n[$$] Check that it doesn't already exist and try another." >&2
 		exit 10
 	fi
 fi
@@ -531,7 +525,7 @@ while : ;do
 	# First, find all the new nodes that have never been connected to at all.
 	# Next, check any nodes that haven't been updated in the user defined timeframe.
 	echo "[$$] Probing and updating all new and out of date nodes..."
-	time=$(($EPOCHSECONDS - POLL_TIME))
+	time=$((EPOCHSECONDS - POLL_TIME))
 	sql="select count(1) from DASH_NODES where active_ynu='U' or (active_ynu!='U' and checked_time<$time);"
 
 	# The hotspot in the code is the database access.  Put a timer on this call and if it is starting to take a long time, then add a delay.
@@ -539,9 +533,9 @@ while : ;do
 	time_now=$EPOCHSECONDS
 		# Count the number of times we go through the loop and do nothing, finish after a set limit.
 		row_count=$(execute_sql "$sql")
-		(( $row_count == 0 )) && ((idle_cycle++))
-	difference=$(($EPOCHSECONDS - time_now ))
-	(( $difference > 2 )) && sleep "$difference"0
+		(( row_count == 0 )) && ((idle_cycle++))
+	difference=$((EPOCHSECONDS - time_now ))
+	(( difference > 2 )) && sleep "$difference"0
 
 	sql="select ip,port from DASH_NODES where active_ynu='U' and check_in_progress_YN='N'"
 	sql+="union all "
@@ -552,20 +546,22 @@ while : ;do
 		execute_sql "update DASH_NODES set check_in_progress_YN='Y' where ip=\"$IP\" and port=$PORT;"
 		echo "[$$] Checking $IP:$PORT..."
 		# Make it re-entrant.
-		"$0" -child -datadir "$DATADIR" -network "$NETWORK" $IP $PORT &
+		"$0" -child -datadir "$DATADIR" -network "$NETWORK" "$IP" "$PORT" &
 		sleep 1
 	done
 	sleep 5
 
-	# Delete stale entries.
-	# This will improvement, just because a node is not reachable doesn't mean it is connected to the network.
-	# Ideally we want to store last_seen_time from the nodes perspective.
-	time=$(($EPOCHSECONDS - DELETE_TIME))
-	sql="delete from DASH_NODES where last_seen_time<$time;"
-	execute_sql "$sql"
 
-	if (( $idle_cycle > 25 ));then
+	if (( idle_cycle > 25 ));then
 		idle_cycle=0
+
+		# Delete stale entries.
+		time=$((EPOCHSECONDS - DELETE_TIME))
+		sql="begin transaction;"
+		sql+="delete from DASH_NODES where last_seen_time<$time;"
+		sql+="select 'Deleted '||changes()||' stale records from the database...';commit;"
+		execute_sql "$sql"
+
 		str="[$$] The database is now fully updated, going to sleep for 1 hour before\n"
 		str+="[$$] updating again or you can exit now with CTRL + C and check the results."
 		echo -e "$str"
