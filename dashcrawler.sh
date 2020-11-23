@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.2.0 build date 202011160056)"
+VERSION="$0 (v0.2.2 build date 202011222010)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -537,11 +537,16 @@ while : ;do
 	sql="select count(1) from DASH_NODES where active_ynu='U' or (active_ynu!='U' and checked_time<$time);"
 	# Count the number of times we go through the loop and do nothing, finish after a set limit.
 	row_count=$(execute_sql "$sql")
-	(( row_count == 0 )) && ((idle_cycle++))
+	if (( row_count == 0 ));then
+		((idle_cycle++))
+	else
+		idle_cycle=0
+	fi
 
 	sql="select ip,port from DASH_NODES where active_ynu='U' and check_in_progress_YN='N'"
 	sql+="union all "
-	sql+="select ip,port from DASH_NODES where active_ynu!='U' and checked_time<$time and check_in_progress_YN='N' limit 500;"
+	sql+="select ip,port from ("
+	sql+="select ip,port,checked_time from DASH_NODES where active_ynu!='U' and checked_time<$time and check_in_progress_YN='N' order by checked_time limit 500);"
 	execute_sql "$sql"|
 	while IFS='|' read -r IP PORT;do
 		# We will mark the child as busy here before launching the process, the child will reverse this update just before exiting.
@@ -561,7 +566,7 @@ while : ;do
 	done
 	sleep 5
 
-	if (( idle_cycle > 25 ));then
+	if (( idle_cycle > 30 ));then
 		idle_cycle=0
 
 		# Delete stale entries.
@@ -570,15 +575,15 @@ while : ;do
 		sql+="delete from DASH_NODES where last_seen_time<$time;"
 		sql+="select 'Deleted '||changes()||' stale records from the database...';commit;"
 		execute_sql "$sql"
-
-		str="[$$] The database is now fully updated, going to sleep for 1 hour before\n"
-		str+="[$$] updating again or you can exit now with CTRL + C and check the results."
-		echo -e "$str"
+		echo "[$$] Making a backup of the database..."
 		# This will be a good time to take a backup of the database.
 		BACKUP_DB="$(dirname "$DATABASE_FILE")/$(date +"%Y%m%d%H%M%S")_nodes.db"
 		cp "$DATABASE_FILE" "$BACKUP_DB"
 		bzip2 -9 "$BACKUP_DB" >/dev/null 2>&1
-		sleep 3600
+		str="[$$] The database is now fully updated, going to sleep for 30 minutes before\n"
+		str+="[$$] updating again or you can exit now with CTRL + C and check the results."
+		echo -e "$str"
+		sleep 1800
 	fi
 done
 
