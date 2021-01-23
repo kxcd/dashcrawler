@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.2.2 build date 202011222010)"
+VERSION="$0 (v0.2.3 build date 202101240035)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -116,13 +116,6 @@ DATABASE_FILE="$DATADIR/database/$NETWORK/nodes.db"
 # Checks that the required software is installed on this machine.
 check_dependencies(){
 
-	perl -v >/dev/null 2>&1
-	if (( $? != 0 ));then
-		progs+=" perl"
-	else
-		perl -v|grep -q "This is perl " || echo "[$$] Please update your perl to at least version 5." >&2
-	fi
-
 	bc -v >/dev/null 2>&1 || progs+=" bc"
 
 	nc -h >/dev/null 2>&1 || progs+=" netcat"
@@ -150,17 +143,6 @@ make_datadir(){
 	fi
 }
 
-# Takes 1 argument the hex string with no spaces, eg 'deadbeef01'
-# and prints the raw data it represents.
-hex_to_raw(){
-	if (( $# != 1 ));then echo "[$$] hex_to_raw requires exactly one argument." >&2;exit 12 ;fi
-	if [[ $1 =~ ^[a-f,A-F,0-9]+$ ]];then
-		perl -pe 'y/A-Fa-f0-9//dc; $_= pack("H*",$_);' <<< "$1"
-	else
-		echo "[$$] Error converting $1 to raw." >&2
-		exit 13
-	fi
-}
 
 create_payloads(){
 
@@ -231,20 +213,20 @@ create_payloads(){
 	net_magic_command=$net_magic"76657273696f6e0000000000"
 
 	# Finally compute the double sha256 hash of the payload.
-	payload_hash=$(hex_to_raw "$vers_payload"|sha256sum|while read -r a b;do h=$(hex_to_raw "$a"|sha256sum);echo "${h:0:8}";done)
+	payload_hash=$(xxd -r -p <<< "$vers_payload"|sha256sum|while read -r a b;do h=$(xxd -r -p <<< "$a"|sha256sum);echo "${h:0:8}";done)
 
 	message_header=$net_magic_command$payload_size$payload_hash
 
-	hex_to_raw "$message_header" >"$DATADIR"/payloads/payload_01.bin
+	xxd -r -p <<< "$message_header" >"$DATADIR"/payloads/payload_01.bin
 	if (( $? != 0 ));then
 		echo "[$$] Unable to create payload into $DATADIR/payloads/payload_01.bin exiting..." >&2
 		exit 3
 	fi
-	hex_to_raw "$vers_payload" >"$DATADIR"/payloads/payload_02.bin
+	xxd -r -p <<< "$vers_payload" >"$DATADIR"/payloads/payload_02.bin
 
 	# Just replay the next two payloads, nothing interesting or dynamic in them.
-	hex_to_raw $net_magic"76657261636b000000000000000000005df6e0e2" >"$DATADIR"/payloads/payload_03.bin
-	hex_to_raw $net_magic"676574616464720000000000000000005df6e0e2" >"$DATADIR"/payloads/payload_04.bin
+	xxd -r -p <<< $net_magic"76657261636b000000000000000000005df6e0e2" >"$DATADIR"/payloads/payload_03.bin
+	xxd -r -p <<< $net_magic"676574616464720000000000000000005df6e0e2" >"$DATADIR"/payloads/payload_04.bin
 }
 
 
@@ -397,7 +379,7 @@ probe_node_and_parse_data(){
 				# Stored as little endian
 				protocol_version="$((16#${line:54:2}${line:52:2}${line:50:2}${line:48:2}))"
 				ua_length="$((16#${line:208:2}))"
-				user_agent=$(hex_to_raw "${line:210:$((ua_length * 2))}")
+				user_agent=$(xxd -r -p <<< "${line:210:$((ua_length * 2))}")
 				# Not a serious error, but possible reasons for it to happen is if the string has a null byte or maybe ' or " then it could get truncated.
 				if (( ua_length != ${#user_agent} ));then
 					echo "[$$] The User Agent string \'$user_agent\' is ${#user_agent} characters long, but the reported length is $ua_length." >&2
@@ -469,7 +451,7 @@ probe_node_and_parse_data(){
 			"$magic"*)
 				# For debugging only print any other message types sent from this node that we are ignoring.
 				# Use tr to remove the null byte otherwise bash complains.
-				msg=$(hex_to_raw  "${line:8:24}"|tr -d '\000')
+				msg=$(xxd -r -p <<<  "${line:8:24}"|tr -d '\000')
 				echo "[$$] Ignoring unhandled message: $msg." >&2
 				;;
 			*)
