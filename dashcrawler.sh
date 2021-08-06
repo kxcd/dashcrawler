@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.2.3 build date 202101240035)"
+VERSION="$0 (v0.2.4 build date 202108061300)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -69,12 +69,12 @@ case $key in
 		shift;shift
 		;;
 	-protocol)
-		if [[ "$1" =~ ^[0-9]+$ ]];then
+		if ! [[ "$2" =~ ^[0-9]+$ ]];then
 			echo -e "[$$] Protocol number be a number eg 70217." >&2
 			exit 15
 		fi
-		PROTOCOL=$1
-		shift
+		PROTOCOL=$2
+		shift;shift
 		;;
 	-datadir)
 		DATADIR="$2"
@@ -539,12 +539,14 @@ while : ;do
 
 		# The hotspot in the code is the database access.
 		# Check the error rate and slowdown if too fast.
-		while : ;do
-			start_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
-			sleep 1
-			end_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
-			(( start_size==end_size))&&break
-		done
+		if ! ((EPOCHSECONDS%2));then
+			while : ;do
+				start_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
+				sleep 2
+				end_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
+				((start_size==end_size))&&break
+			done
+		fi
 	done
 	sleep 5
 
