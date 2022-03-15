@@ -42,7 +42,7 @@ cat >"$f"<<"EOF"
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="language" content="en-AU">
+		<meta name="description" content="Dash P2P network user agents">
 		<link rel="icon" type="image/png" href="/favicon.ico"/>
 		<link rel="stylesheet" type="text/css" href="useragents.css"/>
 		<script src="https://www.gstatic.com/charts/loader.js"></script>
@@ -113,6 +113,42 @@ cat >>"$f"<<"EOF"
   var options = {title:'DASH Only User Agents',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
 
   var chart = new google.visualization.PieChart(document.getElementById('dash-only'));
+  chart.draw(data, options);
+}
+</script>
+EOF
+
+
+
+
+
+
+
+cat >>"$f"<<"EOF"
+<div id="dash-only-location" class="pie"></div>
+<script>
+google.charts.load('current', {'packages':['corechart']});
+google.charts.setOnLoadCallback(drawChart);
+
+function drawChart() {
+  var data = google.visualization.arrayToDataTable([
+  ['Country', 'Count'],
+EOF
+
+
+sql="select '  ['''||country_name||''',' ||cnt||'],' from (select country_name,count(1)as cnt from DASH_NODES d join country c on c.country_code=d.country_code where user_agent like '%Dash Core%' group by country_name order by 2 desc);"
+res=$(sqlite3 "$database_file"<<<"$sql")
+res="${res:0:((${#res}-1))}"
+echo "$res"|sed 's|/||'>>"$f"
+
+
+
+cat >>"$f"<<"EOF"
+]);
+
+  var options = {title:'DASH Only User Agents by country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
+
+  var chart = new google.visualization.PieChart(document.getElementById('dash-only-location'));
   chart.draw(data, options);
 }
 </script>
@@ -250,6 +286,43 @@ cat >>"$f"<<"EOF"
 }
 </script>
 EOF
+
+
+
+
+
+
+
+cat >>"$f"<<"EOF"
+<div id="dash-only-mn-location" class="pie"></div>
+<script>
+google.charts.load('current', {'packages':['corechart']});
+google.charts.setOnLoadCallback(drawChart);
+
+function drawChart() {
+  var data = google.visualization.arrayToDataTable([
+  ['Country', 'Count'],
+EOF
+
+sql="select '  ['''||country_name||''',' ||cnt||'],' from (select country_name,count(1)as cnt from DASH_NODES d join country c on c.country_code=d.country_code where masternode_ynu='Y' group by country_name order by 2 desc);"
+res=$(sqlite3 "$database_file"<<<"$sql")
+res="${res:0:((${#res}-1))}"
+echo "$res"|sed 's|/||'>>"$f"
+
+
+
+cat >>"$f"<<"EOF"
+]);
+
+  var options = {title:'DASH Masternode User Agents by country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
+
+  var chart = new google.visualization.PieChart(document.getElementById('dash-only-mn-location'));
+  chart.draw(data, options);
+}
+</script>
+EOF
+
+
 
 
 
