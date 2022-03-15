@@ -146,7 +146,7 @@ echo "$res"|sed 's|/||'>>"$f"
 cat >>"$f"<<"EOF"
 ]);
 
-  var options = {title:'DASH Only User Agents by country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
+  var options = {title:'DASH Only Full Nodes by Country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
 
   var chart = new google.visualization.PieChart(document.getElementById('dash-only-location'));
   chart.draw(data, options);
@@ -314,7 +314,7 @@ echo "$res"|sed 's|/||'>>"$f"
 cat >>"$f"<<"EOF"
 ]);
 
-  var options = {title:'DASH Masternode User Agents by country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
+  var options = {title:'DASH Masternodes by Country',backgroundColor:'black',titleTextStyle:{color:'white'},legend:{textStyle:{color:'white'}},sliceVisibilityThreshold:.0001,is3D:true};
 
   var chart = new google.visualization.PieChart(document.getElementById('dash-only-mn-location'));
   chart.draw(data, options);
