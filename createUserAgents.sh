@@ -2,6 +2,7 @@
 #set -x
 set -e
 
+! pidof -q -x -o $$ $(basename "$0")||exit
 
 PATH=$PATH:/opt/dash/bin
 dcli(){
@@ -62,7 +63,7 @@ EOF
 
 # Need to create the data structure from the query.
 sql="select '  ['''||user_agent||''',' ||cnt||'],' from (select user_agent,count(1)as cnt from DASH_NODES group by user_agent order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -101,7 +102,7 @@ EOF
 
 
 sql="select '  ['''||user_agent||''',' ||cnt||'],' from (select user_agent,count(1)as cnt from DASH_NODES where user_agent like '%Dash Core%' group by user_agent order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -137,7 +138,7 @@ EOF
 
 
 sql="select '  ['''||country_name||''',' ||cnt||'],' from (select country_name,count(1)as cnt from DASH_NODES d join country c on c.country_code=d.country_code where user_agent like '%Dash Core%' group by country_name order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -174,7 +175,7 @@ EOF
 
 
 sql="select '  ['''||protocol_version||''',' ||cnt||'],' from (select protocol_version,count(1)as cnt from DASH_NODES where user_agent like '%Dash Core%' group by protocol_version order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -217,7 +218,7 @@ EOF
 
 
 sql="select '  ['''||reachable||''',' ||cnt||'],' from (select case active_ynu when 'Y' then 'Yes' when 'N' then 'No' else 'Unknown' end as reachable,count(1)as cnt from DASH_NODES where user_agent like '%Dash Core%' group by reachable order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -247,11 +248,12 @@ EOF
 
 sql="begin transaction;update dash_nodes set masternode_ynu='N';"
 sql+=$(dcli protx list valid 1|jq -r '.[].state.service'|sed "s/\(.*\):\(.*\)/update dash_nodes set masternode_ynu='Y' where ip='\1' and port=\2;/")
+(($? + PIPESTATUS)) && exit 1
 sql+="select count(1)from dash_nodes where masternode_ynu='Y';commit;"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 
 # I want to skip the Masternode charts if some reason the updates failed.
-if ((res>3000));then
+if ((res>2000));then
 
 
 
@@ -270,7 +272,7 @@ EOF
 
 
 sql="select '  ['''||user_agent||''',' ||cnt||'],' from (select user_agent,count(1)as cnt from DASH_NODES where masternode_ynu='Y' group by user_agent order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -305,7 +307,7 @@ function drawChart() {
 EOF
 
 sql="select '  ['''||country_name||''',' ||cnt||'],' from (select country_name,count(1)as cnt from DASH_NODES d join country c on c.country_code=d.country_code where masternode_ynu='Y' group by country_name order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -342,7 +344,7 @@ EOF
 
 
 sql="select '  ['''||protocol_version||''',' ||cnt||'],' from (select protocol_version,count(1)as cnt from DASH_NODES where masternode_ynu='Y' group by protocol_version order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 
@@ -378,7 +380,7 @@ EOF
 
 
 sql="select '  ['''||reachable||''',' ||cnt||'],' from (select case active_ynu when 'Y' then 'Yes' when 'N' then 'No' else 'Unknown' end as reachable,count(1)as cnt from DASH_NODES where masternode_ynu='Y' group by reachable order by 2 desc);"
-res=$(sqlite3 "$database_file"<<<"$sql")
+res=$(sqlite3 -init / "$database_file"<<<"$sql")
 res="${res:0:((${#res}-1))}"
 echo "$res"|sed 's|/||'>>"$f"
 

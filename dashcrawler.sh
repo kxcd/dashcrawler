@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.3.2 build date 202203142100)"
+VERSION="$0 (v0.3.6 build date 202408060155)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -16,7 +16,7 @@ mainnet_magic="BF0C6BBD"
 POLL_TIME=$((60 * 60 * 24 * 1))
 
 # Delete nodes that have not been active DELETE_TIME seconds.
-DELETE_TIME=$((60 * 60 * 24 * 5))
+DELETE_TIME=$((60 * 60 * 24 * 7))
 
 usage(){
 	text="$VERSION\n"
@@ -70,7 +70,7 @@ case $key in
 		;;
 	-protocol)
 		if ! [[ "$2" =~ ^[0-9]+$ ]];then
-			echo -e "[$$] Protocol number be a number eg 70217." >&2
+			echo -e "[$$] Protocol number be a number eg 70228." >&2
 			exit 15
 		fi
 		PROTOCOL=$2
@@ -159,7 +159,7 @@ create_payloads(){
 		version_services=$(printf '%08x' "$PROTOCOL")
 		version_services=${version_services:6:2}${version_services:4:2}${version_services:2:2}${version_services:0:2}"0500000000000000"
 	else
-		version_services="491201000500000000000000"
+		version_services="541201000500000000000000"
 	fi
 	timestamp=$(printf '%08x' "$EPOCHSECONDS")
 	timestamp=${timestamp:6:2}${timestamp:4:2}${timestamp:2:2}${timestamp:0:2}"00000000"
@@ -235,7 +235,7 @@ execute_sql(){
 
 	[[ -z $1 ]] && return
 	for((i=1; i<100; i++));do
-		sqlite3 "$DATABASE_FILE" <<< "$1" 2>>"$DATADIR"/logs/sqlite.log && return
+		sqlite3 -init / "$DATABASE_FILE" <<< "$1" 2>>"$DATADIR"/logs/sqlite.log && return
 		retval=$?
 		echo "[$$] Failed query attempt number: $i." >>"$DATADIR"/logs/sqlite.log
 		delay=1
@@ -272,7 +272,9 @@ initialise_database(){
 		# These will have a recent last_seen_time because the network is still reporting them as valid nodes.
 		sql="create table db_version(version integer primary key not null);"
 		sql+="insert into db_version values(1);"
-		sql+="create table DASH_NODES(id INTEGER PRIMARY KEY ASC NOT NULL, ip TEXT NOT NULL, port INTEGER NOT NULL check(port>=0 and port<65536), active_YNU TEXT DEFAULT 'U' NOT NULL, last_active_time INTEGER,last_seen_time INTEGER, checked_time INTEGER, check_in_progress_YN TEXT DEFAULT 'N', protocol_version INTEGER, height INTEGER, user_agent TEXT, masternode_ynu TEXT DEFAULT 'U' NOT NULL,country_code TEXT);"
+		sql+="create table hosts(host_id INTEGER PRIMARY KEY ASC NOT NULL,host_name text not null unique,host_code text not null unique);"
+		sql+="insert into hosts(host_name,host_code)values('AllNodes','A');"
+		sql+="create table DASH_NODES(id INTEGER PRIMARY KEY ASC NOT NULL, ip TEXT NOT NULL, port INTEGER NOT NULL check(port>=0 and port<65536), active_YNU TEXT DEFAULT 'U' NOT NULL, last_active_time INTEGER,last_seen_time INTEGER, checked_time INTEGER, check_in_progress_YN TEXT DEFAULT 'N', protocol_version INTEGER, height INTEGER, user_agent TEXT, masternode_ynu TEXT DEFAULT 'U' NOT NULL,country_code TEXT,host_id integer,foreign key(host_id)references hosts(host_id));"
 		sql+="create unique index idx_ip_port on DASH_NODES(ip,port);"
 		sql+="create table country(country_name text not null, country_code text primary key not null);"
 		sql+="insert into country(country_name,country_code)values('Afghanistan','AF');"
@@ -561,9 +563,10 @@ check_and_upgrade_database(){
 probe_node_and_parse_data(){
 
 	if (( $# != 2 ));then echo "[$$] probe_node_and_parse_data requires exactly two argument." >&2;exit 11 ;fi
-	dump_file="$DATADIR/dumps/$(date +"%Y%m%d%H%M%S")_$1_$2.bin"
+	echo "[$$] Examining node at $1:$2..." >&2
+	local dump_file="$DATADIR/dumps/$(date +"%Y%m%d%H%M%S")_$1_$2.bin"
 	cat "$DATADIR"/payloads/payload_0[1234].bin | nc -v -w 120 "$1" "$2" > "$dump_file" &
-	nc_pid=$!
+	local nc_pid=$!
 	# If after 5 seconds the file size is still zero the host is dead.
 	sleep 5
 	if (( $(stat -c "%s" "$dump_file") == 0 ));then
@@ -575,14 +578,14 @@ probe_node_and_parse_data(){
 		count=$(execute_sql "$sql")
 		if (( count>0 ));then
 			sql="update DASH_NODES set active_ynu='N', checked_time=strftime('%s','now') where ip=\"$1\" and port=$2;"
-			execute_sql "$sql"
+			execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 		else
 			sql="insert into DASH_NODES(ip, port, active_ynu, checked_time)values(\"$1\", $2, 'N', strftime('%s','now'));"
-			execute_sql "$sql"
+			execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 		fi
 		return
 	fi
-	seconds=5
+	local seconds=5
 
 	while [[ $(pidof nc) =~ $nc_pid ]];do
 		echo "[$$] $dump_file after $seconds sec has file size: $(stat -c "%s" "$dump_file")" >&2
@@ -649,11 +652,12 @@ probe_node_and_parse_data(){
 				count=$(execute_sql "$sql")
 				if (( count>0 ));then
 					# BUG: If the user-agent ends up having a " in the string it will cause these SQL statements to break.
+					user_agent=$(tr -d \" <<<  $user_agent)
 					sql="update DASH_NODES set active_ynu='Y', last_active_time=strftime('%s','now'), last_seen_time=strftime('%s','now'), checked_time=strftime('%s','now'), protocol_version=$protocol_version, height=$height, user_agent=\"$user_agent\", masternode_ynu=\"$masternode\" where ip=\"$1\" and port=$2;"
-					execute_sql "$sql"
+					execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 				else
 					sql="insert into DASH_NODES (ip, port, active_ynu, last_active_time, last_seen_time, checked_time, protocol_version, height, user_agent, masternode_ynu)values(\"$1\", $2, 'Y', strftime('%s','now'), strftime('%s','now'), strftime('%s','now'), $protocol_version, $height, \"$user_agent\",\"$masternode\");"
-					execute_sql "$sql"
+					execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 				fi
 				;;
 			# Addresses
@@ -674,6 +678,7 @@ probe_node_and_parse_data(){
 				num_ip="$((16#${line:52:2}${line:50:2}))"
 				echo "[$$] This node $1:$2 sent $num_ip IPs to check." >&2
 				echo "[$$] Inserting discovered IPs into the database..." >&2
+				local count_skipped_ipv6=0
 				for((i=0; i<num_ip; i++));do
 					if [[ "${line:$((78 + i * 60)):24}" = "00000000000000000000FFFF" ]];then
 						ip="$((16#${line:$((102 + i * 60)):2})).$((16#${line:$((104 + i * 60)):2})).$((16#${line:$((106 + i * 60)):2})).$((16#${line:$((108 + i * 60)):2}))"
@@ -681,9 +686,11 @@ probe_node_and_parse_data(){
 						# Insert into a temporary table for insert and duplicate processing in bulk in the database for much better performance.
 						sql_insert+="insert into SEEN_NODES values(\"$ip\",$port);"
 					else
-						echo "[$$] Skipping IPv6 address..." >&2
+						#echo "[$$] Skipping IPv6 address..." >&2
+						((count_skipped_ipv6++))
 					fi
 				done
+				echo "[$$] Skipped $count_skipped_ipv6 IPv6 addresses." >&2
 				# Run the sql and all the DB to do all the work assuming we have at least 1 IP to process.
 				if (( num_ip > 0 ));then
 					echo "[$$] Making changes to the database..." >&2
@@ -695,7 +702,7 @@ probe_node_and_parse_data(){
 							insert into DASH_NODES (ip,port,last_seen_time) select t.ip,t.port,strftime('%s','now') from temp.SEEN_NODES t where not exists (select 1 from DASH_NODES d where d.ip=t.ip and d.port=t.port);
 							select 'Inserted '||changes()||' new records into the database...';
 							commit;"
-					execute_sql "$sql"
+					execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 				fi
 				echo "[$$] Database changes are complete." >&2
 				;;
@@ -709,7 +716,7 @@ probe_node_and_parse_data(){
 				# This handles the case where we get data back from the node, but it wasn't actually a dash node at all.
 				echo "[$$] Got unrecognised data from this node $1:$2 ==> $line" >&2
 				sql="update DASH_NODES set active_ynu='N', checked_time=strftime('%s','now') where ip=\"$1\" and port=$2;"
-				execute_sql "$sql"
+				execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 				;;
 		esac
 	done
@@ -719,7 +726,7 @@ probe_node_and_parse_data(){
 if [[ -n $CHILD ]];then
 	probe_node_and_parse_data "$IP" "$PORT"
 	retval=$?
-	execute_sql "update DASH_NODES set check_in_progress_YN='N' where ip=\"$IP\" and port=$PORT;"
+	execute_sql "update DASH_NODES set check_in_progress_YN='N' where ip=\"$IP\" and port=$PORT;" || echo -e "[$$] Query failed.\n$sql" >&2
 	echo "[$$] Child process will now die." >&2
 	exit $retval
 fi
@@ -747,14 +754,26 @@ check_and_upgrade_database
 
 # Special case.
 # If a node is given on the command line add it to the database so the database has at least one seed to get going.
+#if [[ -n $IP ]];then
+#	sql="insert into DASH_NODES(ip,port)values(\"$IP\",$PORT);"
+#	execute_sql "$sql"
+#	if (( $? != 0 ));then
+#		echo -e "[$$] Error inserting specified address $IP:$PORT into the database.\n[$$] Check that it doesn't already exist and try another." >&2
+#		exit 10
+#	fi
+#fi
+
+# Special case.
+# If a node is given on the command line add it to the database so the database has at least one seed to get going.
 if [[ -n $IP ]];then
-	sql="insert into DASH_NODES(ip,port)values(\"$IP\",$PORT);"
-	execute_sql "$sql"
-	if (( $? != 0 ));then
-		echo -e "[$$] Error inserting specified address $IP:$PORT into the database.\n[$$] Check that it doesn't already exist and try another." >&2
-		exit 10
+	sql="select id from dash_nodes where ip='$IP' and port=$PORT;"
+	id=$(execute_sql "$sql")
+	if [[ -z $id ]];then
+		sql="insert into DASH_NODES(ip,port)values(\"$IP\",$PORT);"
+		execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 	fi
 fi
+
 
 # Main Loop.
 echo "[$$] Starting main loop..."
@@ -783,7 +802,7 @@ while : ;do
 	execute_sql "$sql"|
 	while IFS='|' read -r IP PORT;do
 		# We will mark the child as busy here before launching the process, the child will reverse this update just before exiting.
-		execute_sql "update DASH_NODES set check_in_progress_YN='Y' where ip=\"$IP\" and port=$PORT;"
+		execute_sql "update DASH_NODES set check_in_progress_YN='Y' where ip=\"$IP\" and port=$PORT;" || echo -e "[$$] Query failed.\n$sql" >&2
 		echo "[$$] Checking $IP:$PORT..."
 		# Make it re-entrant.
 		"$0" -child -datadir "$DATADIR" -network "$NETWORK" "$IP" "$PORT" &
@@ -793,7 +812,7 @@ while : ;do
 		if ! ((EPOCHSECONDS%2));then
 			while : ;do
 				start_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
-				sleep 2
+				sleep 5
 				end_size=$(stat -c "%s" "$DATADIR"/logs/sqlite.log)
 				((start_size==end_size))&&break
 			done
@@ -809,7 +828,7 @@ while : ;do
 		sql="begin transaction;"
 		sql+="delete from DASH_NODES where last_seen_time<$time;"
 		sql+="select 'Deleted '||changes()||' stale records from the database...';commit;"
-		execute_sql "$sql"
+		execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 		execute_sql "vacuum;"
 
 		# Adding in the location data.
@@ -835,9 +854,11 @@ while : ;do
 				sql+="update dash_nodes set country_code='$country_code' where ip='$ip';"
 			done <<< "$ip_list"
 			sql+="commit;"
-			execute_sql "$sql"
+			execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 			echo -e "\n[$$] Done updating country_codes."
 		fi
+		echo "[$$] Cleaning dump dir..."
+		rm "$DATADIR/dumps/"* || find "$DATADIR/dumps/" -type f -name '*.bin' -delete
 		echo "[$$] Making a backup of the database..."
 		# This will be a good time to take a backup of the database.
 		BACKUP_DB="$(dirname "$DATABASE_FILE")/$(date +"%Y%m%d%H%M%S")_nodes.db"
@@ -847,10 +868,10 @@ while : ;do
 		cp "$DATABASE_FILE" /var/www/html/user-agents/.nodes.db
 		# Now that the database is there update the user-agents page with the new data.
 		~/bin/createUserAgents.sh >> ~/user-agents.log 2>&1
-		str="[$$] The database is now fully updated, going to sleep for 30 minutes before\n"
+		str="[$$] The database is now fully updated, going to sleep for 10 minutes before\n"
 		str+="[$$] updating again or you can exit now with CTRL + C and check the results."
 		echo -e "$str"
-		sleep 1800
+		sleep 600
 	fi
 done
 
