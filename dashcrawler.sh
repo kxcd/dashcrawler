@@ -1,7 +1,7 @@
 #!/bin/bash
 #set -x
 
-VERSION="$0 (v0.3.6 build date 202408060155)"
+VERSION="$0 (v0.3.12 build date 202610251300)"
 DATABASE_VERSION=1
 DATADIR="$HOME/.dashcrawler"
 
@@ -35,7 +35,7 @@ usage(){
 	echo -e "$text"
 }
 
-# Parse commandline options and set flags.
+# Parse command line options and set flags.
 while (( $# > 0 ))
 do
 key="$1"
@@ -86,7 +86,7 @@ case $key in
 		;;
 	*)
 		# The default case, try to check for an IP or Port and set it, otherwise complain about bad input.
-		if [[ "$1" =~ ^(0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))\.){3}0*(1?[0-9]{1,2}|2([‌​0-4][0-9]|5[0-5]))$ ]];then
+		if [[ "$1" =~ ^(0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))\.){3}0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))$ ]];then
 			IP="$1"
 		elif [[ "$1" =~ ^[0-9]+$ ]] && (($1 >= 0)) && (($1 < 65536));then
 			PORT=$1
@@ -115,8 +115,6 @@ DATABASE_FILE="$DATADIR/database/$NETWORK/nodes.db"
 
 # Checks that the required software is installed on this machine.
 check_dependencies(){
-
-	bc -v >/dev/null 2>&1 || progs+=" bc"
 
 	nc -h >/dev/null 2>&1 || progs+=" netcat"
 
@@ -563,17 +561,38 @@ check_and_upgrade_database(){
 probe_node_and_parse_data(){
 
 	if (( $# != 2 ));then echo "[$$] probe_node_and_parse_data requires exactly two argument." >&2;exit 11 ;fi
+	local runtime=0
 	echo "[$$] Examining node at $1:$2..." >&2
 	local dump_file="$DATADIR/dumps/$(date +"%Y%m%d%H%M%S")_$1_$2.bin"
 	cat "$DATADIR"/payloads/payload_0[1234].bin | nc -v -w 120 "$1" "$2" > "$dump_file" &
 	local nc_pid=$!
-	# If after 5 seconds the file size is still zero the host is dead.
-	sleep 5
-	if (( $(stat -c "%s" "$dump_file") == 0 ));then
-		kill $nc_pid
+	local file_size
+	# Give a second for nc to immediately fail in the case the host is down.
+	sleep 1
+	((runtime++))
+	while [[ $(pidof nc) =~ $nc_pid ]];do
+		file_size=$(stat -c "%s" "$dump_file")
+		# If after 5 seconds the file size is still zero the host is dead.
+		if (( runtime > 4 && file_size == 0 ));then
+			kill $nc_pid
+			break
+		elif (( file_size < 30000 ));then
+			echo "[$$] $dump_file after $runtime sec has file size: $file_size" >&2
+			# Once the file size has reached a certain size we can assume we've got what we came for and don't need to wait any longer.
+			# However don't kill it too soon in case the data is still streaming into the file.
+		else
+			kill $nc_pid
+			echo "[$$] $dump_file after $runtime sec has final file size: $file_size" >&2
+		fi
+		sleep 2
+		((runtime+=2))
+	done
+
+	if (( file_size == 0 ));then
 		# Let's update the database there are two options.
 		# 1) The node is new, insert it as such.
 		# 2) It is an existing node that is no longer reachable, so update it.
+		echo "[$$] $1:$2 has not responded." >&2
 		sql="select count(1) from DASH_NODES where ip=\"$1\" and port=$2;"
 		count=$(execute_sql "$sql")
 		if (( count>0 ));then
@@ -585,20 +604,6 @@ probe_node_and_parse_data(){
 		fi
 		return
 	fi
-	local seconds=5
-
-	while [[ $(pidof nc) =~ $nc_pid ]];do
-		echo "[$$] $dump_file after $seconds sec has file size: $(stat -c "%s" "$dump_file")" >&2
-		((seconds++))
-		# Once the file size has reached a certain size we can assume we've got what we came for and don't need to wait any longer.
-		# However don't kill it too soon in case the data is still streaming into the file.
-		if (( $(stat -c "%s" "$dump_file") > 15000 ));then
-			sleep 5
-			kill $nc_pid
-			echo "[$$] $dump_file after $((seconds+5)) sec has final file size: $(stat -c "%s" "$dump_file")" >&2
-		fi
-		sleep 1
-	done
 
 	# Now the nodes have been interrogated, time to parse the data files 
 	# We will transpose the raw data into a hex string and find replys
@@ -750,19 +755,6 @@ echo "[$$] Checking database..."
 check_and_upgrade_database
 
 
-
-
-# Special case.
-# If a node is given on the command line add it to the database so the database has at least one seed to get going.
-#if [[ -n $IP ]];then
-#	sql="insert into DASH_NODES(ip,port)values(\"$IP\",$PORT);"
-#	execute_sql "$sql"
-#	if (( $? != 0 ));then
-#		echo -e "[$$] Error inserting specified address $IP:$PORT into the database.\n[$$] Check that it doesn't already exist and try another." >&2
-#		exit 10
-#	fi
-#fi
-
 # Special case.
 # If a node is given on the command line add it to the database so the database has at least one seed to get going.
 if [[ -n $IP ]];then
@@ -773,6 +765,30 @@ if [[ -n $IP ]];then
 		execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
 	fi
 fi
+
+
+# Parm: IP, prints 2 character country code otherwise nothing and returns exit code 1.
+getCountryFromIP(){
+	local ip
+	local country_code
+	ip="$1"
+	[[ -z "$ip" ]] && return 1
+	# Method 1.
+	country_code=$(curl -s https://ipapi.co/${ip}/country/)&&\
+		(( ${#country_code}==2 ))&&\
+		{ echo "$country_code";return;}
+	# For bogus IPs like 127.0.0.1
+	[[ "$country_code" == "Undefined" ]]&&{ echo "??";return;}
+	country_code=$(curl -sH "Accept: application/json" ipinfo.io/${ip})||return 1
+	# Bail if we are rate limited.
+	[[ "$country_code" =~ 'Rate limit exceeded' ]]&&return 1
+	country_code=$(jq -r '.country' <<< "$country_code")&&\
+		(( ${#country_code}==2 ))&&\
+		{ echo "$country_code";return;}
+	# For bogus IPs like 127.0.0.1
+	[[ "$country_code" == "null" ]]&&{ echo "??";return;}
+	return 1
+}
 
 
 # Main Loop.
@@ -832,38 +848,33 @@ while : ;do
 		execute_sql "vacuum;"
 
 		# Adding in the location data.
-		if [[ -f /usr/share/tor/geoip ]];then
-			# We want to find all the missing country_codes and also any country_codes that have been recently updated.
-			# An IP can feature in the data numerous times as several services can run from the same IP.
-			sql="select distinct ip from dash_nodes where country_code is null;"
-			ip_list=$(execute_sql "$sql")
-			sql="begin transaction;"
-			echo "[$$] Found $(wc -l <<< "$ip_list") IPs requiring country_code update..."
-			while read ip junk;do
-				ip_octet1=${ip%%\.*}
-				ip_octet2=${ip#*\.};ip_octet2=${ip_octet2%%\.*}
-				ip_octet3=${ip#*\.*\.};ip_octet3=${ip_octet3%%\.*}
-				ip_octet4=${ip##*\.}
-				x=$((ip_octet1*2**24 + ip_octet2*2**16 + ip_octet3*2**8 + ip_octet4))
-				country_code="??"
-				while IFS=',' read start end code junk;do
-					[[ ${start:0:1} == "#" ]]&&continue
-					((x>start && x<end))&&country_code="$code"&&break
-				done < /usr/share/tor/geoip
-				echo -n "."
-				sql+="update dash_nodes set country_code='$country_code' where ip='$ip';"
-			done <<< "$ip_list"
-			sql+="commit;"
-			execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
-			echo -e "\n[$$] Done updating country_codes."
-		fi
+		# We want to find all the missing country_codes and also any country_codes that have been recently updated.
+		sql="select distinct ip from dash_nodes where country_code is null;"
+		ip_list=$(execute_sql "$sql")
+		sql="begin transaction;"
+		echo "[$$] Found $(wc -l <<< "$ip_list") IPs requiring country_code update..."
+		while read ip junk;do
+			[[ -z $ip ]]&&continue
+			country_code=$(getCountryFromIP "$ip")||break
+			echo -n "."
+			sql+="update dash_nodes set country_code='$country_code' where ip='$ip';"
+		done <<< "$ip_list"
+		sql+="commit;"
+		execute_sql "$sql" || echo -e "[$$] Query failed.\n$sql" >&2
+		echo -e "\n[$$] Done updating country_codes."
+
 		echo "[$$] Cleaning dump dir..."
 		rm "$DATADIR/dumps/"* || find "$DATADIR/dumps/" -type f -name '*.bin' -delete
 		echo "[$$] Making a backup of the database..."
 		# This will be a good time to take a backup of the database.
-		BACKUP_DB="$(dirname "$DATABASE_FILE")/$(date +"%Y%m%d%H%M%S")_nodes.db"
+		BACKUP_DB="/mnt/blockstorage_1/backup/databases/nodes.db_$(date +"%Y%m%d%H%M%S")"
 		cp "$DATABASE_FILE" "$BACKUP_DB"
-		bzip2 -9 "$BACKUP_DB" >/dev/null 2>&1
+		xz -9T8 "$BACKUP_DB" >/dev/null 2>&1
+		# Clean old backups.
+		#find "$(dirname "$DATABASE_FILE")" -mtime +1 -regextype egrep -regex '.*([0-9]{14})_nodes.db.bz2' -delete
+		#find "$(dirname "$DATABASE_FILE")" -mtime +1 -regextype egrep -regex '.*([0-9]{14})_nodes.db.xz' -delete
+		find /mnt/blockstorage_1/backup/databases/ -mtime +2 -regextype egrep -regex '.*nodes.db_([0-9]{14}).*' -delete
+
 		# Now place a copy over to the web folder
 		cp "$DATABASE_FILE" /var/www/html/user-agents/.nodes.db
 		# Now that the database is there update the user-agents page with the new data.
